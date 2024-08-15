@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+{% block title %}Play{% endblock %}
+{% block content %}
+
+<noscript>
+    <div style="color: red; font-weight: bold; text-align: center;">
+        JavaScript is required to play this game. Please enable JavaScript in your browser settings.
+    </div>
+</noscript>
+
+<div class="container mt-5" id="game-container">
+    <div class="text-center">
+        <h2>Stage: <span id="stage-number" class="badge badge-primary">1</span></h2>
+        <h3>Points: <span id="points-earned" class="badge badge-success">0</span></h3>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-body text-center">
+            <h3 id="fruit-name" class="display-4 font-weight-bold"></h3>
+            <input type="text" id="typed-text" class="form-control form-control-lg mt-3 text-center" placeholder="Type here..." autofocus autocomplete="off">
+        </div>
+    </div>
+
+    <div class="mt-4">
+        <div class="d-flex justify-content-between">
+            <p id="time-left" class="font-weight-bold">Time left: <span id="time-value">60</span> seconds</p>
+        </div>
+        <div class="progress">
+            <div id="time-progress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%;" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Cheating Modal -->
+<div id="cheating-modal" style="display:none; position:fixed; z-index:1000; left:50%; top:50%; transform:translate(-50%, -50%); padding:20px; background:white; border:2px solid red;">
+    <p style="color: red; font-weight: bold; margin-bottom: 20px;">Oops! You might be seeing this message for several reasons. You left the page, tinkered with the dev console, or disabled JavaScript (which is probably the worst xD). You'll be redirected to the homepage now.</p>
+</div>
+
+<!-- Result Modal -->
+<div class="modal fade" id="resultModal" tabindex="-1" aria-labelledby="resultModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="resultModalLabel"></h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body" id="resultModalBody">
+                <!-- Dynamic content will be inserted here -->
+            </div>
+            <div class="modal-footer" id="modal-footer">
+                <!-- The "Play Again" button will only be shown if needed -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    @keyframes fall {
+        0% {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        100% {
+            transform: translateY(100vh);
+            opacity: 0;
+        }
+    }
+
+    .fall {
+        animation: fall 1s ease-in-out forwards;
+    }
+</style>
+
+<script>
+    let timerInterval;
+    let stageTimeout; // Új változó a setTimeout kezelésére
+    let stageInProgress = false; // Új változó annak nyomon követésére, hogy egy stage már folyamatban van-e
+
+    // Eseménykezelő függvény definíció kívül, hogy eltávolítható legyen
+    function handleTyping(event) {
+        const key = event.key.toLowerCase();
+        const shuffledKeyMap = window.currentShuffledKeyMap;
+        const typedTextElement = document.getElementById('typed-text');
+        const currentFruit = window.currentFruit;
+
+        console.log('Keydown event triggered with key:', key); // Log az esemény kezelésére
+
+        if (event.key === "Backspace") {
+            event.preventDefault();
+            typedTextElement.value = typedTextElement.value.slice(0, -1);
+            return;
+        }
+
+        if (shuffledKeyMap[key]) {
+            event.preventDefault();
+            typedTextElement.value += shuffledKeyMap[key];
+        } else if (event.key.length === 1) {
+            event.preventDefault();
+        }
+
+        if (typedTextElement.value === currentFruit) {
+            console.log('Fruit matched:', currentFruit); // Log a helyes találatra
+            clearInterval(timerInterval);
+            clearTimeout(stageTimeout); // Az előző timeout törlése
+
+            fetch('/validate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ user_input: typedTextElement.value }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log('Validation success, starting next stage.'); // Log a sikeres validációra
+                    stageInProgress = false; // Stage befejezésének jelölése
+                    showModal('Success!', 'Good job! Moving to the next stage. The keyboard will be shuffled again.', false, false);
+                    stageTimeout = setTimeout(() => {
+                        startStage();
+                    }, 3000); // Timeout csak egyszer fut le
+                } else {
+                    console.log('Validation failed.'); // Log a sikertelen validációra
+                    showModal('Incorrect', 'Something went wrong! Please try again.');
+                }
+            });
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('Page loaded, checking reload status.'); // Log az oldal betöltésekor
+        if (performance.navigation.type === performance.navigation.TYPE_RELOAD) {
+            console.log('Page reloaded, resetting session.'); // Log az oldal újratöltésekor
+            fetch('/reset', { method: 'POST' })
+                .then(() => {
+                    window.location.href = '/dashboard';
+                });
+        } else {
+            console.log('Starting first stage.'); // Log az első stage elindításakor
+            startStage();
+        }
+    });
+
+    function startStage() {
+        if (stageInProgress) {
+            console.log('Stage already in progress, skipping start.'); // Log ha a stage már folyamatban van
+            return;
+        }
+
+        console.log('Starting new stage, clearing previous timers.'); // Log az új stage kezdetekor
+        clearInterval(timerInterval);  // Stop any previous timers
+        stageInProgress = true; // Stage folyamatban van
+
+        // Eseménykezelő eltávolítása
+        const typedTextElement = document.getElementById('typed-text');
+        typedTextElement.removeEventListener('keydown', handleTyping);
+        console.log('Removed existing keydown event listener.'); // Log az eseménykezelő eltávolítására
+
+        fetch('/play', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Stage data received:', data); // Log a beérkezett adatokra
+                window.currentShuffledKeyMap = decodeKeyMap(data.keyboard);
+                window.currentFruit = data.fruit;
+
+                document.getElementById('stage-number').textContent = data.stage;
+                document.getElementById('points-earned').textContent = data.points;
+                document.getElementById('fruit-name').textContent = window.currentFruit;
+                typedTextElement.value = '';
+                typedTextElement.focus();
+                document.getElementById('time-value').textContent = data.time_left;
+
+                const timeProgressElement = document.getElementById('time-progress');
+                timeProgressElement.style.width = '100%';
+                timeProgressElement.classList.remove('bg-danger', 'bg-warning', 'bg-success');
+                timeProgressElement.classList.add('bg-success');
+
+                const totalTime = data.time_left;
+                let timeLeft = totalTime;
+
+                // Set up the new timer
+                timerInterval = setInterval(() => {
+                    timeLeft--;
+                    document.getElementById('time-value').textContent = timeLeft;
+                    const progressPercentage = (timeLeft / totalTime) * 100;
+                    timeProgressElement.style.width = `${progressPercentage}%`;
+
+                    if (progressPercentage <= 50 && progressPercentage > 25) {
+                        timeProgressElement.classList.remove('bg-success');
+                        timeProgressElement.classList.add('bg-warning');
+                    } else if (progressPercentage <= 25) {
+                        timeProgressElement.classList.remove('bg-warning');
+                        timeProgressElement.classList.add('bg-danger');
+                    }
+
+                    if (timeLeft <= 0) {
+                        clearInterval(timerInterval);
+                        console.log('Time is up.'); // Log ha lejár az idő
+                        stageInProgress = false; // Stage befejezésének jelölése
+                        showModal('Time\'s Up!', 'Your time has run out. Redirecting you to the homepage...', true, false);
+                    }
+                }, 1000);
+
+                // Eseménykezelő hozzáadása
+                typedTextElement.addEventListener('keydown', handleTyping);
+                console.log('Added keydown event listener for typing.'); // Log az új eseménykezelő hozzáadására
+            });
+    }
+
+    function collapseElements() {
+        const elements = document.querySelectorAll('#game-container, #game-container *');
+        elements.forEach(element => {
+            element.classList.add('fall');
+        });
+    }
+
+    function showModal(title, body, redirect = true, showPlayAgain = true) {
+        document.getElementById('resultModalLabel').textContent = title;
+        document.getElementById('resultModalBody').textContent = body;
+        const resultModal = new bootstrap.Modal(document.getElementById('resultModal'));
+        resultModal.show();
+
+        const modalFooter = document.getElementById('modal-footer');
+        if (showPlayAgain) {
+            modalFooter.innerHTML = '<button type="button" class="btn btn-primary" id="play-again-btn">Play Again</button>';
+            document.getElementById('play-again-btn').addEventListener('click', function() {
+                window.location.href = '/play';
+            });
+        } else {
+            modalFooter.innerHTML = ''; // No button for "Good job!"
+        }
+
+        if (redirect) {
+            setTimeout(() => {
+                window.location.href = '/dashboard';
+            }, 5000);
+        } else {
+            setTimeout(() => {
+                resultModal.hide();
+                startStage();
+            }, 3000);
+        }
+    }
+
+    // Detect JS disable or tab switch
+    window.onblur = function() {
+        timerPaused = true;
+    };
+
+    window.onfocus = function() {
+        if (timerPaused) {
+            showCheatingModal();
+        }
+    };
+
+    function decodeKeyMap(encodedKeyMap) {
+        const decodedString = atob(encodedKeyMap);
+        const keyValuePairs = decodedString.split(',');
+        const keyMap = {};
+        keyValuePairs.forEach(pair => {
+            const [key, value] = pair.split(':');
+            keyMap[key] = value;
+        });
+        return keyMap;
+    }
+
+    function showCheatingModal() {
+        collapseElements();
+        setTimeout(() => {
+            document.getElementById('cheating-modal').style.display = 'block';
+        }, 1000);
+
+        setTimeout(() => {
+            window.location.href = '/dashboard';
+        }, 15000);
+    }
+
+    const element = new Image();
+    Object.defineProperty(element, 'id', {
+        get: function() {
+            alert('Developer tools are open. This can affect the functionality of the game.');
+        }
+    });
+    console.log(element);
+
+</script>
+<script>
+    // Tiltjuk a jobb kattintást az oldalon
+    document.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+    });
+
+    // Tiltjuk a másolást
+    document.addEventListener('copy', function(e) {
+        e.preventDefault();
+    });
+
+    // Tiltjuk a beillesztést
+    document.addEventListener('paste', function(e) {
+        e.preventDefault();
+    });
+
+    // Tiltjuk a kivágást
+    document.addEventListener('cut', function(e) {
+        e.preventDefault();
+    });
+
+    // Tiltjuk a drag (húzás) műveletet
+    document.addEventListener('dragstart', function(e) {
+        e.preventDefault();
+    });
+
+    // Tiltjuk a szöveg kijelölését
+    document.addEventListener('selectstart', function(e) {
+        e.preventDefault();
+    });
+</script>
+{% endblock %}
